@@ -9,6 +9,7 @@ router.post('/signup',userController.signup)
 router.post('/signin',userController.signin)
 router.post('/otp-verify',userController.verifyOtp)
 router.post('/resend-otp', userController.resendOtp);
+router.post('/google', userController.verifyGoogleToken);
 
 
 module.exports = router;

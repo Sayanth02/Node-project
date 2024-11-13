@@ -2,15 +2,16 @@ const User = require("../Models/User");
 const Otp = require('../models/Otp')
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { OAuth2Client } = require("google-auth-library");
 
 
 const generateOtp = () => Math.floor(100000 + Math.random() * 900000); // 6-digit OTP
-
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // SignUp
 const signup = async (req, res) => {
 
-    const { email_or_phone, password ,role } = req.body;
+    const { email_or_phone, password, role } = req.body;
 
     // Check if email_or_phone and password are provided
     if (!email_or_phone || !password) {
@@ -39,12 +40,12 @@ const signup = async (req, res) => {
             email_or_phone: email_or_phone,
             otp: otpCode,
             expiresAt: otpExpiresAt,
-            password:password,
-            role:role
+            password: password,
+            role: role
         });
 
         console.log(`OTP for ${email_or_phone}: ${otpCode}`);
-        res.status(200).json({ message: 'OTP sent for verification',otpCode });
+        res.status(200).json({ message: 'OTP sent for verification', otpCode });
 
 
     } catch (err) {
@@ -111,7 +112,7 @@ const signin = async (req, res) => {
 // otp verify
 
 const verifyOtp = async (req, res) => {
-    const { email_or_phone, otp } = req.body;  
+    const { email_or_phone, otp } = req.body;
 
     try {
         const otpRecord = await Otp.findOne({ email_or_phone, otp });
@@ -129,8 +130,8 @@ const verifyOtp = async (req, res) => {
         const newUser = new User({
             email: email_or_phone.includes('@') ? email_or_phone : undefined,
             phone: email_or_phone.includes('@') ? undefined : email_or_phone,
-            password: otpRecord.password ,
-            role : otpRecord.role
+            password: otpRecord.password,
+            role: otpRecord.role
         });
 
         await newUser.save();
@@ -172,15 +173,72 @@ const resendOtp = async (req, res) => {
 
         console.log(`Resent OTP for ${email_or_phone}: ${newOtpCode}`);
         res.status(200).json({ message: 'New OTP sent for verification' });
-        
+
     } catch (err) {
         res.status(500).json({ message: 'Server error', error: err.message });
     }
 };
 
+// google signup
+const verifyGoogleToken = async (req, res) => {
+    const { idToken } = req.body;
+    if (!idToken) {
+        return res.status(400).json({ error: 'ID Token is required' });
+    }
+
+    try {
+        const ticket = await client.verifyIdToken({
+            idToken: idToken,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+
+        const payload = ticket.getPayload();
+
+        let user = await User.findOne({ email: payload.email });
+        console.log('User found in DB:', user);
+
+        if (!user) {
+            console.log('User not found, creating a new user...');
+            user = await User.create({
+                email: payload.email,
+                googleId: payload.sub,
+                role: 'user'
+            });
+            console.log('New user created:', user);
+        }
+        const accessToken = jwt.sign(
+            { userId: user._id, email: user.email },
+            process.env.ACCESS_TOKEN_SECRET,
+            { expiresIn: '1h' }
+        );
+
+        const refreshToken = jwt.sign(
+            { userId: user._id, email: user.email },
+            process.env.REFRESH_TOKEN_SECRET,
+            { expiresIn: '30d' }
+        );
+        res.status(200).json({
+            message: 'User verified successfully',
+            userInfo: {
+                email: payload.email,
+                name: payload.name,
+                picture: payload.picture
+            },
+            accessToken,
+            refreshToken
+        });
+
+    } catch (error) {
+        console.error('Error verifying ID Token:', error);
+        res.status(400).json({ error: 'Invalid ID Token' });
+    }
+};
+
+
 module.exports = {
     signup,
     signin,
     verifyOtp,
-    resendOtp
+    resendOtp,
+    verifyGoogleToken
 };
